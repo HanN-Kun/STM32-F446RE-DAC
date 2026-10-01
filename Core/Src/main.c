@@ -46,15 +46,16 @@ ADC_HandleTypeDef hadc1;
 
 DAC_HandleTypeDef hdac;
 
+TIM_HandleTypeDef htim6;
+
 UART_HandleTypeDef huart2;
 
 /* USER CODE BEGIN PV */
-uint8_t rx_byte;
-char rx_buffer[32];
-uint8_t rx_index = 0;
-uint32_t dac_val = 0;
-uint32_t adc_val = 0;
-float adc_voltage = 0.0f;
+#define LUT_SIZE 32
+uint32_t tri_lut[LUT_SIZE];
+volatile uint32_t lut_index = 0;
+char msg[32];
+uint32_t adc_val;
 /* USER CODE END PV */
 
 /* Private function prototypes -----------------------------------------------*/
@@ -63,6 +64,7 @@ static void MX_GPIO_Init(void);
 static void MX_DAC_Init(void);
 static void MX_ADC1_Init(void);
 static void MX_USART2_UART_Init(void);
+static void MX_TIM6_Init(void);
 /* USER CODE BEGIN PFP */
 
 /* USER CODE END PFP */
@@ -104,11 +106,17 @@ int main(void)
   MX_DAC_Init();
   MX_ADC1_Init();
   MX_USART2_UART_Init();
+  MX_TIM6_Init();
   /* USER CODE BEGIN 2 */
+  for (int i = 0; i < LUT_SIZE / 2; i++) {
+      tri_lut[i] = (i * 4095) / (LUT_SIZE / 2 - 1);
+  }
+  for (int i = LUT_SIZE / 2; i < LUT_SIZE; i++) {
+      tri_lut[i] = tri_lut[LUT_SIZE - 1 - i];
+  }
+
   HAL_DAC_Start(&hdac, DAC_CHANNEL_1);
-  HAL_UART_Receive_IT(&huart2, &rx_byte, 1);
-  char msg[] = "\r\n--- STM32 DAC UART Kontrol Paneli ---\r\n0-100 arasi yuzde veya 0-4095 arasi deger girip Enter'a basin:\r\n";
-  HAL_UART_Transmit(&huart2, (uint8_t*)msg, strlen(msg), 100);
+  HAL_TIM_Base_Start_IT(&htim6);
   /* USER CODE END 2 */
 
   /* Infinite loop */
@@ -118,17 +126,16 @@ int main(void)
     /* USER CODE END WHILE */
 
     /* USER CODE BEGIN 3 */
-	  HAL_DAC_SetValue(&hdac, DAC_CHANNEL_1, DAC_ALIGN_12B_R, dac_val);
 	  HAL_ADC_Start(&hadc1);
-	  if (HAL_ADC_PollForConversion(&hadc1, 100) == HAL_OK)
-	  {
-		  adc_val = HAL_ADC_GetValue(&hadc1);
-		  adc_voltage = ((float)adc_val * 3.3f) / 4095.0f;
-	  }
-	  HAL_ADC_Stop(&hadc1);
-	  HAL_Delay(100);
+	  HAL_ADC_PollForConversion(&hadc1, 10);
+	  adc_val = HAL_ADC_GetValue(&hadc1);
+
+	  int len = sprintf(msg, "%lu\r\n", adc_val);
+	  HAL_UART_Transmit(&huart2, (uint8_t*)msg, len, 100);
+
+	  HAL_Delay(50);
+  }
   /* USER CODE END 3 */
-}
 }
 
 /**
@@ -211,7 +218,7 @@ static void MX_ADC1_Init(void)
 
   /** Configure for the selected ADC regular channel its corresponding rank in the sequencer and its sample time.
   */
-  sConfig.Channel = ADC_CHANNEL_0;
+  sConfig.Channel = ADC_CHANNEL_1;
   sConfig.Rank = 1;
   sConfig.SamplingTime = ADC_SAMPLETIME_3CYCLES;
   if (HAL_ADC_ConfigChannel(&hadc1, &sConfig) != HAL_OK)
@@ -252,7 +259,7 @@ static void MX_DAC_Init(void)
 
   /** DAC channel OUT1 config
   */
-  sConfig.DAC_Trigger = DAC_TRIGGER_NONE;
+  sConfig.DAC_Trigger = DAC_TRIGGER_T6_TRGO;
   sConfig.DAC_OutputBuffer = DAC_OUTPUTBUFFER_ENABLE;
   if (HAL_DAC_ConfigChannel(&hdac, &sConfig, DAC_CHANNEL_1) != HAL_OK)
   {
@@ -261,6 +268,44 @@ static void MX_DAC_Init(void)
   /* USER CODE BEGIN DAC_Init 2 */
 
   /* USER CODE END DAC_Init 2 */
+
+}
+
+/**
+  * @brief TIM6 Initialization Function
+  * @param None
+  * @retval None
+  */
+static void MX_TIM6_Init(void)
+{
+
+  /* USER CODE BEGIN TIM6_Init 0 */
+
+  /* USER CODE END TIM6_Init 0 */
+
+  TIM_MasterConfigTypeDef sMasterConfig = {0};
+
+  /* USER CODE BEGIN TIM6_Init 1 */
+
+  /* USER CODE END TIM6_Init 1 */
+  htim6.Instance = TIM6;
+  htim6.Init.Prescaler = 999;
+  htim6.Init.CounterMode = TIM_COUNTERMODE_UP;
+  htim6.Init.Period = 499;
+  htim6.Init.AutoReloadPreload = TIM_AUTORELOAD_PRELOAD_DISABLE;
+  if (HAL_TIM_Base_Init(&htim6) != HAL_OK)
+  {
+    Error_Handler();
+  }
+  sMasterConfig.MasterOutputTrigger = TIM_TRGO_UPDATE;
+  sMasterConfig.MasterSlaveMode = TIM_MASTERSLAVEMODE_DISABLE;
+  if (HAL_TIMEx_MasterConfigSynchronization(&htim6, &sMasterConfig) != HAL_OK)
+  {
+    Error_Handler();
+  }
+  /* USER CODE BEGIN TIM6_Init 2 */
+
+  /* USER CODE END TIM6_Init 2 */
 
 }
 
@@ -317,46 +362,15 @@ static void MX_GPIO_Init(void)
 }
 
 /* USER CODE BEGIN 4 */
-void HAL_UART_RxCpltCallback(UART_HandleTypeDef *huart)
+void HAL_TIM_PeriodElapsedCallback(TIM_HandleTypeDef *htim)
 {
-  if (huart->Instance == USART2)
-  {
-    if (rx_byte == '\r' || rx_byte == '\n')
-    {
-      if (rx_index > 0)
-      {
-        rx_buffer[rx_index] = '\0';
-        int input_val = atoi(rx_buffer);
-        if (input_val <= 100)
-        {
-          dac_val = (input_val * 4095) / 100;
-        }
-        else
-        {
-          if (input_val > 4095) input_val = 4095;
-          dac_val = input_val;
-        }
-
-        HAL_DAC_SetValue(&hdac, DAC_CHANNEL_1, DAC_ALIGN_12B_R, dac_val);
-
-        char tx_msg[64];
-        float voltage = ((float)dac_val * 3.3f) / 4095.0f;
-        sprintf(tx_msg, "Ayarlandi -> DAC: %lu | Gerilim: %.2fV\r\n", dac_val, voltage);
-        HAL_UART_Transmit(&huart2, (uint8_t*)tx_msg, strlen(tx_msg), 100);
-
-        rx_index = 0;
-      }
+    if (htim->Instance == TIM6) {
+        HAL_DAC_SetValue(&hdac, DAC_CHANNEL_1, DAC_ALIGN_12B_R, tri_lut[lut_index]);
+        lut_index++;
+        if (lut_index >= LUT_SIZE) lut_index = 0;
     }
-    else
-    {
-      if (rx_index < sizeof(rx_buffer) - 1)
-      {
-        rx_buffer[rx_index++] = rx_byte;
-      }
-    }
-    HAL_UART_Receive_IT(&huart2, &rx_byte, 1);
-  }
 }
+
 /* USER CODE END 4 */
 
 /**
