@@ -1,0 +1,22 @@
+# STM32CubeIDE / Eclipse Derleme Çıktıları
+Debug/
+Release/
+build/
+
+# Derlenmiş İkili (Binary) ve Obje Dosyaları
+*.o
+*.su
+*.d
+*.elf
+*.bin
+*.hex
+*.map
+*.list
+
+# Yerel IDE ve Hata Ayıklama Ayarları
+.settings/
+*.launch
+
+# İşletim Sistemi Dosyaları
+.DS_Store
+Thumbs.db
