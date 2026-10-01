@@ -24,6 +24,7 @@
 #include "stdio.h"
 #include "stdlib.h"
 #include "string.h"
+#include "math.h"
 /* USER CODE END Includes */
 
 /* Private typedef -----------------------------------------------------------*/
@@ -45,15 +46,15 @@
 ADC_HandleTypeDef hadc1;
 
 DAC_HandleTypeDef hdac;
+DMA_HandleTypeDef hdma_dac1;
 
 TIM_HandleTypeDef htim6;
 
 UART_HandleTypeDef huart2;
 
 /* USER CODE BEGIN PV */
-#define LUT_SIZE 32
-uint32_t tri_lut[LUT_SIZE];
-volatile uint32_t lut_index = 0;
+#define LUT_SIZE 100
+uint16_t sine_lut[LUT_SIZE];
 char msg[32];
 uint32_t adc_val;
 /* USER CODE END PV */
@@ -61,6 +62,7 @@ uint32_t adc_val;
 /* Private function prototypes -----------------------------------------------*/
 void SystemClock_Config(void);
 static void MX_GPIO_Init(void);
+static void MX_DMA_Init(void);
 static void MX_DAC_Init(void);
 static void MX_ADC1_Init(void);
 static void MX_USART2_UART_Init(void);
@@ -103,20 +105,18 @@ int main(void)
 
   /* Initialize all configured peripherals */
   MX_GPIO_Init();
+  MX_DMA_Init();
   MX_DAC_Init();
   MX_ADC1_Init();
   MX_USART2_UART_Init();
   MX_TIM6_Init();
   /* USER CODE BEGIN 2 */
-  for (int i = 0; i < LUT_SIZE / 2; i++) {
-      tri_lut[i] = (i * 4095) / (LUT_SIZE / 2 - 1);
-  }
-  for (int i = LUT_SIZE / 2; i < LUT_SIZE; i++) {
-      tri_lut[i] = tri_lut[LUT_SIZE - 1 - i];
+  for (int i = 0; i < LUT_SIZE; i++) {
+      sine_lut[i] = (uint16_t)((sinf(2.0f * 3.14159265f * i / LUT_SIZE) + 1.0f) * 2047.5f);
   }
 
-  HAL_DAC_Start(&hdac, DAC_CHANNEL_1);
-  HAL_TIM_Base_Start_IT(&htim6);
+  HAL_DAC_Start_DMA(&hdac, DAC_CHANNEL_1, (uint32_t*)sine_lut, LUT_SIZE, DAC_ALIGN_12B_R);
+  HAL_TIM_Base_Start(&htim6);
   /* USER CODE END 2 */
 
   /* Infinite loop */
@@ -291,7 +291,7 @@ static void MX_TIM6_Init(void)
   htim6.Instance = TIM6;
   htim6.Init.Prescaler = 999;
   htim6.Init.CounterMode = TIM_COUNTERMODE_UP;
-  htim6.Init.Period = 499;
+  htim6.Init.Period = 159;
   htim6.Init.AutoReloadPreload = TIM_AUTORELOAD_PRELOAD_DISABLE;
   if (HAL_TIM_Base_Init(&htim6) != HAL_OK)
   {
@@ -343,6 +343,22 @@ static void MX_USART2_UART_Init(void)
 }
 
 /**
+  * Enable DMA controller clock
+  */
+static void MX_DMA_Init(void)
+{
+
+  /* DMA controller clock enable */
+  __HAL_RCC_DMA1_CLK_ENABLE();
+
+  /* DMA interrupt init */
+  /* DMA1_Stream5_IRQn interrupt configuration */
+  HAL_NVIC_SetPriority(DMA1_Stream5_IRQn, 0, 0);
+  HAL_NVIC_EnableIRQ(DMA1_Stream5_IRQn);
+
+}
+
+/**
   * @brief GPIO Initialization Function
   * @param None
   * @retval None
@@ -362,14 +378,6 @@ static void MX_GPIO_Init(void)
 }
 
 /* USER CODE BEGIN 4 */
-void HAL_TIM_PeriodElapsedCallback(TIM_HandleTypeDef *htim)
-{
-    if (htim->Instance == TIM6) {
-        HAL_DAC_SetValue(&hdac, DAC_CHANNEL_1, DAC_ALIGN_12B_R, tri_lut[lut_index]);
-        lut_index++;
-        if (lut_index >= LUT_SIZE) lut_index = 0;
-    }
-}
 
 /* USER CODE END 4 */
 
